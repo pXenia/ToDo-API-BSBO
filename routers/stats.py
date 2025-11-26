@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict
 
@@ -35,3 +37,29 @@ async def get_tasks_stats(db: AsyncSession = Depends(get_async_session)) -> dict
         "by_quadrant": by_quadrant,
         "by_status": by_status
     }
+
+
+@router.get("/deadlines", response_model=list)
+async def get_deadline_stats(db: AsyncSession = Depends(get_async_session)):
+    # Выбор задач из БД со сроком и установленным сроком
+    result = await db.execute(
+        select(Task).where(Task.completed == False, Task.deadline_at.isnot(None))
+    )
+    tasks = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    stats = []
+
+    for task in tasks:
+        days_to_deadline = (task.deadline_at - now).days
+        stats.append({
+            "title": task.title,
+            "description": task.description,
+            "created_at": task.created_at,
+            "deadline_at": task.deadline_at,
+            "days_remaining": days_to_deadline
+        })
+
+    # Сортировка по оставшимся дням
+    stats.sort(key=lambda x: x["days_remaining"])
+    return stats

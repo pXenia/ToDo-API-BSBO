@@ -24,10 +24,9 @@ class Task(Base):
         nullable=False,
         default=False
     )
-    is_urgent = Column(
-        Boolean,
-        nullable=False,
-        default=False
+    deadline_at = Column(
+        DateTime(timezone=True),
+        nullable=True
     )
     quadrant = Column(
         String(2),

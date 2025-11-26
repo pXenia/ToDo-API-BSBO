@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_async_session
-from typing import List
-from datetime import datetime
+from typing import List, Optional
+from datetime import datetime, timezone
 from models.task import Task
 from schemas import TaskResponse, TaskUpdate, TaskCreate
 
@@ -19,7 +19,7 @@ async def get_all_tasks(
 ) -> List[TaskResponse]:
     result = await db.execute(select(Task))
     tasks = result.scalars().all()
-    return tasks
+    return [prepare_task_to_response(task) for task in tasks]
 
 # Получить задачи по квадранту
 @router.get("/quadrant/{quadrant}", response_model=List[TaskResponse])
@@ -37,7 +37,8 @@ async def get_tasks_by_quadrant(
         select(Task).where(Task.quadrant == quadrant)
     )
     tasks = result.scalars().all()
-    return tasks
+    return [prepare_task_to_response(task) for task in tasks]
+
 
 # Поиск задач
 @router.get("/search", response_model=List[TaskResponse])
@@ -55,7 +56,8 @@ async def search_tasks(
     tasks = result.scalars().all()
     if not tasks:
         raise HTTPException(status_code=404, detail="По данному запросу ничего не найдено")
-    return tasks
+    return [prepare_task_to_response(task) for task in tasks]
+
 
 # Получить задачи по статусу
 @router.get("/status/{status}", response_model=List[TaskResponse])
@@ -72,7 +74,8 @@ async def get_tasks_by_status(
     )
 
     tasks = result.scalars().all()
-    return tasks
+    return [prepare_task_to_response(task) for task in tasks]
+
 
 # Получить задачу по ID
 @router.get("/{task_id}", response_model=TaskResponse)
@@ -86,29 +89,23 @@ async def get_task_by_id(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
-    return task
+    return prepare_task_to_response(task)
 
 # Создать новую задачу
-@router.post("/", response_model=TaskResponse,
-             status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_task(
-    task: TaskCreate,
-    db: AsyncSession = Depends(get_async_session)
+        task: TaskCreate,
+        db: AsyncSession = Depends(get_async_session)
 ) -> TaskResponse:
-    if task.is_important and task.is_urgent:
-        quadrant = "Q1"
-    elif task.is_important and not task.is_urgent:
-        quadrant = "Q2"
-    elif not task.is_important and task.is_urgent:
-        quadrant = "Q3"
-    else:
-        quadrant = "Q4"
+
+    is_urgent = calculate_urgency(task.deadline_at) # Определение срочности
+    quadrant = define_quadrant(task.is_important, is_urgent) # Определение квадранта
 
     new_task = Task(
         title=task.title,
         description=task.description,
         is_important=task.is_important,
-        is_urgent=task.is_urgent,
+        deadline_at=task.deadline_at,
         quadrant=quadrant,
         completed=False
     )
@@ -116,7 +113,8 @@ async def create_task(
     db.add(new_task)
     await db.commit()
     await db.refresh(new_task)
-    return new_task
+
+    return prepare_task_to_response(new_task)
 
 # Обновить задачу
 @router.put("/{task_id}", response_model=TaskResponse)
@@ -139,15 +137,8 @@ async def update_task(
     for field, value in update_data.items():
         setattr(task, field, value)
 
-    if "is_important" in update_data or "is_urgent" in update_data:
-        if task.is_important and task.is_urgent:
-            task.quadrant = "Q1"
-        elif task.is_important and not task.is_urgent:
-            task.quadrant = "Q2"
-        elif not task.is_important and task.is_urgent:
-            task.quadrant = "Q3"
-        else:
-            task.quadrant = "Q4"
+    is_urgent = calculate_urgency(task.deadline_at)
+    task.quadrant = define_quadrant(task.is_important, is_urgent)
 
     await db.commit()
     await db.refresh(task)
@@ -200,4 +191,48 @@ async def complete_task(
     await db.commit()
     await db.refresh(task)
 
-    return task
+    return prepare_task_to_response(task)
+
+
+def calculate_urgency(deadline: Optional[datetime]) -> bool:
+    if not deadline:
+        return False
+    now = datetime.now(timezone.utc)
+    delta = (deadline - now).days
+    return delta <= 3
+
+
+def define_quadrant(is_important: bool, is_urgent: bool) -> str:
+    if is_important and is_urgent:
+        return "Q1"
+    elif is_important and not is_urgent:
+        return "Q2"
+    elif not is_important and is_urgent:
+        return "Q3"
+    else:
+        return "Q4"
+
+
+def prepare_task_to_response(task: Task) -> TaskResponse:
+    is_urgent = calculate_urgency(task.deadline_at)
+    # количество дней до дедлайна
+    days_until = None
+    if task.deadline_at:
+        now = datetime.now(timezone.utc)
+        days_until = (task.deadline_at - now).days
+
+    return TaskResponse(
+        id=task.id,
+        title=task.title,
+        description=task.description,
+        is_important=task.is_important,
+        deadline_at=task.deadline_at,
+        quadrant=task.quadrant,
+        completed=task.completed,
+        created_at=task.created_at,
+        completed_at=task.completed_at,
+        is_urgent=is_urgent,
+        days_until_deadline=days_until
+    )
+
+

@@ -22,9 +22,9 @@ class TaskBase(BaseModel):
         ...,  # Обязательное поле
         description="Важность задачи"
     )
-    is_urgent: bool = Field(
-        ...,  # Обязательное поле
-        description="Срочность задачи"
+    deadline_at: Optional[datetime] = Field(
+        None,
+        description="Плановый дедлайн"
     )
 
 ## Схема для создания новой задачи
@@ -50,9 +50,9 @@ class TaskUpdate(BaseModel):
         None,
         description="Новая важность"
     )
-    is_urgent: Optional[bool] = Field(
+    deadline_at: Optional[datetime] = Field(
         None,
-        description="Новая срочность"
+        description="Дедлайн"
     )
     completed: Optional[bool] = Field(
         None,
@@ -80,6 +80,19 @@ class TaskResponse(TaskBase):
         ...,
         description="Дата и время создания задачи"
     )
+    completed_at: Optional[datetime] = Field(
+        ...,
+        description="Дата завершения задачи"
+    )
+    is_urgent: bool = Field(
+        ...,
+        description="Рассчитанная срочность"
+    )
+    days_until_deadline: Optional[int] = Field(
+        None,
+        description="Дней до дедлайна")
+
+
 
     class Config:
         # Config класс для работы с ORM (понадобится после подключения СУБД)
