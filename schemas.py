@@ -92,8 +92,24 @@ class TaskResponse(TaskBase):
         None,
         description="Дней до дедлайна")
 
-
-
     class Config:
         # Config класс для работы с ORM (понадобится после подключения СУБД)
         from_attributes = True
+
+class TimingStatsResponse(BaseModel):
+    completed_on_time: int = Field(
+        ...,
+        description="Количество задач, завершенных в срок"
+    )
+    completed_late: int = Field(
+        ...,
+        description="Количество задач, завершенных с нарушением сроков"
+    )
+    on_plan_pending: int = Field(
+        ...,
+        description="Количество задач в работе, выполняемых в соответствии с планом"
+    )
+    overtime_pending: int = Field(
+        ...,
+        description="Количество просроченных незавершенных задач"
+    )
