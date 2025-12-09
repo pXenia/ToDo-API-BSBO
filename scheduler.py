@@ -57,14 +57,14 @@ def start_scheduler():
     )
 
     # Для тестирования: запуск каждые 5 минут
-    scheduler.add_job(
-         update_task_urgency,
-         trigger='interval',
-         minutes=1,
-         id='update_urgency_test',
-         name='Тестовое обновление срочности',
-         replace_existing=True
-     )
+    # scheduler.add_job(
+    #      update_task_urgency,
+    #      trigger='interval',
+    #      minutes=1,
+    #      id='update_urgency_test',
+    #      name='Тестовое обновление срочности',
+    #      replace_existing=True
+    #  )
 
     scheduler.start()
     print("Планировщик задач запущен")

@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 
@@ -47,6 +48,18 @@ class Task(Base):
         nullable=True
     )
 
+    user_id = Column(
+        Integer,
+        ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True
+    )
+
+    owner = relationship(
+        "User",
+        back_populates="tasks"
+    )
+
     def __repr__(self) -> str:
         return (
             f"<Task(id={self.id}, title='{self.title[:30]}...', "
@@ -63,5 +76,6 @@ class Task(Base):
             "quadrant": self.quadrant,
             "completed": self.completed,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "user_id": self.user_id
         }
