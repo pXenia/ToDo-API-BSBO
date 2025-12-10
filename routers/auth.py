@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_async_session
 from models import User, UserRole
+from models.utils import ChangePasswordRequest
 from schemas_auth import UserCreate, UserResponse, Token
 from auth_utils import verify_password, get_password_hash, create_access_token
 from dependencies import get_current_user
@@ -87,3 +88,23 @@ async def get_me(
         current_user: User = Depends(get_current_user)
 ):
     return current_user
+
+@router.patch("/change-password")
+async def change_password(
+        data: ChangePasswordRequest,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_async_session)
+):
+    # Проверка старого пароля
+    if not verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Старый пароль указан неверно"
+        )
+
+    # Обновление пароля
+    current_user.hashed_password = get_password_hash(data.new_password)
+    db.add(current_user)
+    await db.commit()
+
+    return {"message": "Пароль успешно обновлён"}

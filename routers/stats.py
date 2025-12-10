@@ -4,8 +4,10 @@ from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_async_session
 from models.task import Task
+from models import User
 from schemas import TimingStatsResponse, TaskResponse
 from utils import prepare_task_to_response
+from dependencies import get_current_user
 
 
 router = APIRouter(
@@ -14,37 +16,33 @@ router = APIRouter(
 )
 
 @router.get("/", response_model=dict)
-async def get_tasks_stats(db: AsyncSession = Depends(get_async_session)) -> dict:
-    # Общее количество задач
-    total_result = await db.execute(select(func.count(Task.id)))
-    total_tasks = total_result.scalar()
+async def get_tasks_stats(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+) -> dict:
+    # Все задачи с учетом роли пользователя
+    if current_user.role.value == "admin":
+        result = await db.execute(select(Task))
+    else:
+        result = await db.execute(select(Task).where(Task.user_id == current_user.id))
 
-    # Подсчет по квадрантам (одним запросом)
-    quadrant_result = await db.execute(
-        select(
-            Task.quadrant,
-            func.count(Task.id).label('count')
-        )
-        .group_by(Task.quadrant)
-    )
+    tasks = result.scalars().all()
 
-    # Инициализация словаря для квадрантов (Q1-Q4)
+    total_tasks = len(tasks)
+
+    # Подсчет по квадрантам
     by_quadrant = {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0}
-    for row in quadrant_result:
-        by_quadrant[row.quadrant] = row.count
+    for task in tasks:
+        if task.quadrant in by_quadrant:
+            by_quadrant[task.quadrant] += 1
 
-    status_result = await db.execute(
-        select(
-            func.count(case((Task.completed == True, 1))).label('completed'),
-            func.count(case((Task.completed == False, 1))).label('pending')
-        )
-    )
-    status_row = status_result.one()
-
-    by_status = {
-        "completed": status_row.completed,
-        "pending": status_row.pending
-    }
+    # Подсчет по статусу
+    by_status = {"completed": 0, "pending": 0}
+    for task in tasks:
+        if task.completed:
+            by_status["completed"] += 1
+        else:
+            by_status["pending"] += 1
 
     return {
         "total_tasks": total_tasks,
@@ -53,17 +51,30 @@ async def get_tasks_stats(db: AsyncSession = Depends(get_async_session)) -> dict
     }
 
 
+
 @router.get("/deadlines", response_model=list)
-async def get_deadline_stats(db: AsyncSession = Depends(get_async_session)):
-    # Выбор задач из БД со сроком и установленным сроком
-    result = await db.execute(
-        select(Task).where(Task.completed == False, Task.deadline_at.isnot(None))
-    )
+async def get_deadline_stats(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    # Все задачи с установленным сроком и не выполненные
+    if current_user.role.value == "admin":
+        result = await db.execute(
+            select(Task).where(Task.completed == False, Task.deadline_at.isnot(None))
+        )
+    else:
+        result = await db.execute(
+            select(Task).where(
+                Task.completed == False,
+                Task.deadline_at.isnot(None),
+                Task.user_id == current_user.id
+            )
+        )
+
     tasks = result.scalars().all()
-
     now = datetime.now(timezone.utc)
-    stats = []
 
+    stats = []
     for task in tasks:
         days_to_deadline = (task.deadline_at - now).days
         stats.append({
@@ -80,74 +91,67 @@ async def get_deadline_stats(db: AsyncSession = Depends(get_async_session)):
 
 
 @router.get("/timing", response_model=TimingStatsResponse)
-async def get_deadline_stats(db: AsyncSession = Depends(get_async_session)) -> TimingStatsResponse:
+async def get_timing_stats(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+) -> TimingStatsResponse:
     now_utc = datetime.now(timezone.utc)
 
-    statement = select(
-        func.sum(
-            case(
-                ((Task.completed == True) & (Task.completed_at <= Task.deadline_at), 1),
-                else_=0
-            )
-        ).label("completed_on_time"),
+    # Все задачи с учетом роли пользователя
+    if current_user.role.value == "admin":
+        result = await db.execute(select(Task))
+    else:
+        result = await db.execute(select(Task).where(Task.user_id == current_user.id))
 
-        func.sum(
-            case(
-                ((Task.completed == True) & (Task.completed_at > Task.deadline_at), 1),
-                else_=0
-            )
-        ).label("completed_late"),
+    tasks = result.scalars().all()
 
-        func.sum(
-            case(
-                (
-                    (Task.completed == False) &
-                    (Task.deadline_at != None) &
-                    (Task.deadline_at > now_utc),
-                    1
-                ),
-                else_=0
-            )
-        ).label("on_plan_pending"),
+    completed_on_time = 0
+    completed_late = 0
+    on_plan_pending = 0
+    overtime_pending = 0
 
-        func.sum(
-            case(
-                (
-                    (Task.completed == False) &
-                    (Task.deadline_at != None) &
-                    (Task.deadline_at <= now_utc),
-                    1
-                ),
-                else_=0
-            )
-        ).label("overdue_pending"),
-    ).select_from(Task)
-
-    result = await db.execute(statement)
-    stats_row = result.one()
+    for task in tasks:
+        if task.completed:
+            if task.completed_at and task.deadline_at:
+                if task.completed_at <= task.deadline_at:
+                    completed_on_time += 1
+                else:
+                    completed_late += 1
+        else:
+            if task.deadline_at:
+                if task.deadline_at > now_utc:
+                    on_plan_pending += 1
+                else:
+                    overtime_pending += 1
 
     return TimingStatsResponse(
-        completed_on_time=stats_row.completed_on_time or 0,
-        completed_late=stats_row.completed_late or 0,
-        on_plan_pending=stats_row.on_plan_pending or 0,
-        overtime_pending=stats_row.overdue_pending or 0,
+        completed_on_time=completed_on_time,
+        completed_late=completed_late,
+        on_plan_pending=on_plan_pending,
+        overtime_pending=overtime_pending,
     )
 
 @router.get("/today", response_model=list[TaskResponse])
-async def get_tasks_for_today(db: AsyncSession = Depends(get_async_session)):
-    # Текущая дата
+async def get_tasks_for_today(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
     today = date.today()
 
-    # Приведение deadline_at к дате
-    stmt = (
-        select(Task)
-        .where(
+    # Фильтр по пользователю
+    if current_user.role.value == "admin":
+        stmt = select(Task).where(
             func.date(Task.deadline_at) == today,
             Task.completed == False
         )
-    )
+    else:
+        stmt = select(Task).where(
+            func.date(Task.deadline_at) == today,
+            Task.completed == False,
+            Task.user_id == current_user.id
+        )
 
     result = await db.execute(stmt)
     tasks = result.scalars().all()
 
-    return [prepare_task_to_response(task) for task in tasks] # подготовка вывода
+    return [prepare_task_to_response(task) for task in tasks]

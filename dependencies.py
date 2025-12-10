@@ -43,8 +43,6 @@ async def get_current_user(
 
 
 # Авторизация, возвращает объект User, а если пользователь является администратором
-
-
 async def get_current_admin(
         current_user: User = Depends(get_current_user)
 ) -> User:
